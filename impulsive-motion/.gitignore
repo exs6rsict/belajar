@@ -5,3 +5,8 @@ dist
 
 # Ignore the output video from Git but not videos you import into src/.
 out
+
+# Audio lagu berhak cipta: taruh sendiri di public/, jangan di-commit.
+public/*.mp3
+public/*.m4a
+public/*.wav
