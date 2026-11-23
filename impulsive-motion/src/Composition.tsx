@@ -8,40 +8,36 @@ import {
   staticFile,
   useCurrentFrame,
   useVideoConfig,
+  Easing,
 } from "remotion";
-import { loadFont as loadAnton } from "@remotion/google-fonts/Anton";
-import { loadFont as loadMarker } from "@remotion/google-fonts/PermanentMarker";
-import { loadFont as loadGlitch } from "@remotion/google-fonts/RubikGlitch";
-import { loadFont as loadWet } from "@remotion/google-fonts/RubikWetPaint";
-import { loadFont as loadMono } from "@remotion/google-fonts/SpaceMono";
+import { loadFont as loadInterTight } from "@remotion/google-fonts/InterTight";
 import beatsData from "./beats.json";
 import lyricsData from "./lyrics.json";
 
 // ---------------------------------------------------------------------------
-// Fonts (dipilih dari referensi Pinterest: poster "I don't think, I don't blink"
-// yang pakai huruf kuas kuning + cipratan cat merah, plus kinetic type condensed)
+// Gaya: referensi @y6richo — kinetic typography 3D ala After Effects.
+// Huruf kecil sans tebal dengan tracking rapat, glow putih, kata kunci
+// di-extrude 3D ungu/oranye, kamera 3D bergerak, garis cahaya melesat.
 // ---------------------------------------------------------------------------
-const ANTON = loadAnton("normal", { weights: ["400"], subsets: ["latin"] }).fontFamily;
-const MARKER = loadMarker("normal", { weights: ["400"], subsets: ["latin"] }).fontFamily;
-const GLITCH = loadGlitch("normal", { weights: ["400"], subsets: ["latin"] }).fontFamily;
-const WET = loadWet("normal", { weights: ["400"], subsets: ["latin"] }).fontFamily;
-const MONO = loadMono("normal", { weights: ["700"], subsets: ["latin"] }).fontFamily;
+const FONT = loadInterTight("normal", { weights: ["800", "900"], subsets: ["latin"] }).fontFamily;
 
 const FPS = 30;
 const W = 1080;
+const H = 1920;
 
 type Props = {
   audioFile: string;
-  yellow: string;
-  red: string;
-  ink: string;
+  purple: string;
+  orange: string;
+  /** Teks muncul sedikit lebih awal dari vokal supaya terasa pas (detik). */
+  lyricLead: number;
 };
 
 const defaultProps: Props = {
   audioFile: "impulsive.mp3",
-  yellow: "#ffe500",
-  red: "#ff2b4a",
-  ink: "#0b0b0b",
+  purple: "#a259ff",
+  orange: "#ff8a2b",
+  lyricLead: 0.05,
 };
 
 type Word = { w: string; t: number };
@@ -51,16 +47,14 @@ const BEATS = beatsData.beats as number[];
 const STRENGTH = beatsData.strength as number[];
 const DURATION = lyricsData.duration;
 
-// Bagian lagu (detik, relatif ke potongan).
 const CHORUS_START = LINES.find((l) => l.text.includes("don't think"))!.t;
-const PRE_START = LINES.find((l) => l.text.startsWith("I ain't never"))!.t;
 const OUTRO_START = LINES[LINES.length - 1].t;
 
 const ACCENT = new Set([
-  "30", "NIGHTS", "CRAZY", "LIFE", "ADVICE", "RIGHT", "PERFECT", "MIGHT",
-  "THINK", "BLINK", "IMPULSIVE", "SORRY", "RUNWAY", "SOMETHING", "TONIGHT",
+  "30", "nights", "crazy", "life", "advice", "right", "perfect", "might", "tonight",
+  "think", "blink", "impulsive", "sorry", "runway", "something", "never",
 ]);
-const clean = (w: string) => w.replace(/[^a-zA-Z0-9']/g, "").toUpperCase();
+const clean = (w: string) => w.replace(/[^a-zA-Z0-9']/g, "").toLowerCase();
 const isAccent = (w: string) => ACCENT.has(clean(w).replace(/'/g, ""));
 
 export const MyComposition = () => (
@@ -70,280 +64,276 @@ export const MyComposition = () => (
     durationInFrames={Math.floor(DURATION * FPS)}
     fps={FPS}
     width={W}
-    height={1920}
+    height={H}
     defaultProps={defaultProps}
   />
 );
 
 // ---------------------------------------------------------------------------
-// Timing helpers
+// Helpers
 // ---------------------------------------------------------------------------
-const useTime = () => {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  return frame / fps;
-};
-
 const beatInfo = (t: number) => {
   let i = -1;
   for (let k = 0; k < BEATS.length; k++) if (BEATS[k] <= t) i = k;
-  if (i < 0) return { index: -1, since: 99, pulse: 0, strong: false, strength: 0 };
+  if (i < 0) return { index: -1, since: 99, pulse: 0, strong: false };
   const since = t - BEATS[i];
-  const strength = STRENGTH[i] ?? 0.5;
-  return {
-    index: i,
-    since,
-    pulse: Math.exp(-since * 7) * (0.45 + strength * 0.55),
-    strong: strength > 0.7,
-    strength,
-  };
+  const s = STRENGTH[i] ?? 0.5;
+  return { index: i, since, pulse: Math.exp(-since * 8) * (0.4 + s * 0.6), strong: s > 0.7 };
 };
 
-const fitSize = (word: string, max: number, widthFactor: number, avail = W - 120) =>
-  Math.min(max, avail / Math.max(1, word.length * widthFactor));
-
-// ---------------------------------------------------------------------------
-// Texture layers
-// ---------------------------------------------------------------------------
-const Grain: React.FC = () => {
-  const frame = useCurrentFrame();
-  const seed = Math.floor(frame / 2);
-  return (
-    <AbsoluteFill style={{ mixBlendMode: "overlay", opacity: 0.4 }}>
-      <svg width="100%" height="100%">
-        <filter id={`grain${seed}`}>
-          <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves={2} seed={seed} />
-          <feColorMatrix type="saturate" values="0" />
-        </filter>
-        <rect width="100%" height="100%" filter={`url(#grain${seed})`} />
-      </svg>
-    </AbsoluteFill>
-  );
+const shade = (hex: string, k: number) => {
+  const n = parseInt(hex.slice(1), 16);
+  const c = (v: number) => Math.max(0, Math.min(255, Math.round(v * k)));
+  return `rgb(${c((n >> 16) & 255)},${c((n >> 8) & 255)},${c(n & 255)})`;
 };
 
-/** Filter SVG untuk huruf "meleleh/terdistorsi" seperti poster referensi. */
-const WarpDefs: React.FC<{ seed: number; scale: number }> = ({ seed, scale }) => (
-  <svg width={0} height={0} style={{ position: "absolute" }}>
-    <filter id="warp" x="-20%" y="-20%" width="140%" height="140%">
-      <feTurbulence type="fractalNoise" baseFrequency="0.012 0.035" numOctaves={2} seed={seed} />
-      <feDisplacementMap in="SourceGraphic" scale={scale} xChannelSelector="R" yChannelSelector="G" />
-    </filter>
-    <filter id="rough">
-      <feTurbulence type="turbulence" baseFrequency="0.6" numOctaves={1} seed={seed} />
-      <feDisplacementMap in="SourceGraphic" scale={6} />
-    </filter>
-  </svg>
+const textBase = (size: number): React.CSSProperties => ({
+  fontFamily: FONT,
+  fontWeight: 900,
+  fontSize: size,
+  letterSpacing: "-0.075em",
+  lineHeight: 0.82,
+  whiteSpace: "nowrap",
+});
+
+// ---------------------------------------------------------------------------
+// 3D pieces
+// ---------------------------------------------------------------------------
+/** Teks timbul 3D: tumpukan layer di sumbu Z + muka depan bercahaya. */
+const Extruded: React.FC<{ text: string; size: number; color: string; depth?: number }> = ({
+  text,
+  size,
+  color,
+  depth = 14,
+}) => (
+  <div style={{ position: "relative", transformStyle: "preserve-3d" }}>
+    {[...Array(depth)].map((_, i) => (
+      <div
+        key={i}
+        style={{
+          ...textBase(size),
+          position: i === 0 ? "relative" : "absolute",
+          top: 0,
+          left: 0,
+          color: shade(color, 0.85 - (i / depth) * 0.6),
+          transform: `translateZ(${-(depth - i) * 5}px)`,
+        }}
+      >
+        {text}
+      </div>
+    ))}
+    <div
+      style={{
+        ...textBase(size),
+        position: "absolute",
+        top: 0,
+        left: 0,
+        color: shade(color, 1.25),
+        textShadow: `0 0 18px ${color}, 0 0 60px ${color}`,
+      }}
+    >
+      {text}
+    </div>
+  </div>
 );
 
-/** Cipratan cat: blob + tetesan + titik-titik. Deterministik via seed. */
-const Splat: React.FC<{ seed: number; color: string; size: number; grow: number }> = ({
-  seed,
-  color,
-  size,
-  grow,
-}) => {
-  const r = (k: string) => random(`${seed}-${k}`);
-  const blobs = [...Array(9)].map((_, i) => {
-    const a = r(`a${i}`) * Math.PI * 2;
-    const d = r(`d${i}`) * 0.22;
-    return { x: 0.5 + Math.cos(a) * d, y: 0.5 + Math.sin(a) * d, rr: 0.08 + r(`r${i}`) * 0.12 };
-  });
-  const drips = [...Array(5)].map((_, i) => ({
-    x: 0.3 + r(`dx${i}`) * 0.4,
-    w: 0.015 + r(`dw${i}`) * 0.025,
-    h: 0.15 + r(`dh${i}`) * 0.35,
-  }));
-  const dots = [...Array(26)].map((_, i) => {
-    const a = r(`ta${i}`) * Math.PI * 2;
-    const d = 0.28 + r(`td${i}`) * 0.25;
-    return { x: 0.5 + Math.cos(a) * d, y: 0.5 + Math.sin(a) * d, rr: 0.004 + r(`tr${i}`) * 0.02 };
-  });
+/** Garis-garis cahaya yang melesat ke arah kamera. */
+const Streaks: React.FC<{ t: number; boost: number; p: Props }> = ({ t, boost, p }) => {
+  const N = 46;
   return (
-    <svg width={size} height={size} viewBox="0 0 1 1" style={{ overflow: "visible" }}>
-      <g transform={`translate(0.5 0.5) scale(${grow}) translate(-0.5 -0.5)`}>
-        {blobs.map((b, i) => (
-          <circle key={i} cx={b.x} cy={b.y} r={b.rr} fill={color} />
-        ))}
-        {drips.map((d, i) => (
-          <rect key={i} x={d.x} y={0.5} width={d.w} height={d.h * Math.min(1, grow)} rx={d.w / 2} fill={color} />
-        ))}
-        {dots.map((d, i) => (
-          <circle key={i} cx={d.x} cy={d.y} r={d.rr} fill={color} />
-        ))}
-      </g>
-    </svg>
-  );
-};
-
-// ---------------------------------------------------------------------------
-// Lyric scenes
-// ---------------------------------------------------------------------------
-
-/** Verse: kata menumpuk vertikal, font condensed, kata baru "slam" masuk. */
-const StackLine: React.FC<{ line: Line; t: number; p: Props; variant: number }> = ({ line, t, p, variant }) => {
-  const shown = line.words.filter((w) => w.t <= t);
-  const maxLen = Math.max(...line.words.map((w) => clean(w.w).length));
-  const size = fitSize("X".repeat(maxLen), 300, 0.47);
-  const tilt = variant % 2 ? -4 : 3;
-  return (
-    <AbsoluteFill style={{ justifyContent: "center", alignItems: "center" }}>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: variant % 3 === 0 ? "flex-start" : "center", transform: `rotate(${tilt}deg)`, width: W - 120 }}>
-        {shown.map((w, i) => {
-          const age = t - w.t;
-          const isLast = i === shown.length - 1;
-          const slam = interpolate(age, [0, 0.12], [1.9, 1], { extrapolateRight: "clamp" });
-          const blur = interpolate(age, [0, 0.1], [14, 0], { extrapolateRight: "clamp" });
-          const acc = isAccent(w.w);
-          const word = clean(w.w);
-          return (
-            <div
-              key={i}
-              style={{
-                fontFamily: ANTON,
-                fontSize: acc ? size * 1.15 : size,
-                lineHeight: 0.86,
-                color: acc ? p.yellow : isLast ? "white" : "transparent",
-                WebkitTextStroke: !acc && !isLast ? "3px rgba(255,255,255,0.75)" : undefined,
-                transform: `scale(${slam})`,
-                filter: `blur(${blur}px)`,
-                textShadow: acc ? `8px 8px 0 ${p.red}` : undefined,
-                whiteSpace: "nowrap",
-              }}
-            >
-              {word}
-            </div>
-          );
-        })}
-      </div>
-    </AbsoluteFill>
-  );
-};
-
-/** Build-up: satu kata raksasa, glitch RGB, makin ngebut menjelang chorus. */
-const SlamWord: React.FC<{ line: Line; t: number; p: Props; intensity: number }> = ({ line, t, p, intensity }) => {
-  const cur = [...line.words].reverse().find((w) => w.t <= t);
-  if (!cur) return null;
-  const age = t - cur.t;
-  const word = clean(cur.w);
-  const size = fitSize(word, 520, 0.5);
-  const hit = Math.exp(-age * 9);
-  const sp = (6 + hit * 30) * intensity;
-  const jx = (random(`jx${cur.t}`) - 0.5) * 50 * hit;
-  const base: React.CSSProperties = {
-    position: "absolute",
-    fontFamily: ANTON,
-    fontSize: size,
-    lineHeight: 1,
-    whiteSpace: "nowrap",
-  };
-  return (
-    <AbsoluteFill style={{ justifyContent: "center", alignItems: "center", transform: `translateX(${jx}px) scale(${1 + hit * 0.5})` }}>
-      <span style={{ ...base, color: p.red, transform: `translateX(${-sp}px)`, mixBlendMode: "screen" }}>{word}</span>
-      <span style={{ ...base, color: "#00e5ff", transform: `translateX(${sp}px)`, mixBlendMode: "screen" }}>{word}</span>
-      <span style={{ ...base, color: "white" }}>{word}</span>
-    </AbsoluteFill>
-  );
-};
-
-/** Chorus: gaya poster Pinterest — kuas kuning terdistorsi, baris miring bergantian. */
-const PosterLine: React.FC<{ line: Line; t: number; p: Props; lineIdx: number }> = ({ line, t, p, lineIdx }) => {
-  const CW = 0.74; // perkiraan lebar huruf Permanent Marker (em)
-  const words = line.words.map((w) => ({ ...w, c: clean(w.w) }));
-  const maxW = W - 200;
-  const layout = (size: number) => {
-    const rows: (typeof words)[] = [[]];
-    let cur = 0;
-    for (const w of words) {
-      const ww = w.c.length * size * CW + size * 0.3;
-      if (cur + ww > maxW && rows[rows.length - 1].length) {
-        rows.push([]);
-        cur = 0;
-      }
-      rows[rows.length - 1].push(w);
-      cur += ww;
-    }
-    return rows;
-  };
-  let size = 230;
-  let rows = layout(size);
-  while (size > 90 && (rows.length * size * 1.32 > 1300 || rows.some((r) => r.some((w) => w.c.length * size * CW > maxW)))) {
-    size -= 8;
-    rows = layout(size);
-  }
-  const lh = size * 1.32;
-  const top = 960 - (rows.length * lh) / 2;
-  return (
-    <AbsoluteFill style={{ filter: "url(#warp)" }}>
-      {rows.map((row, ri) => {
-        const rot = (ri % 2 ? 2.5 : -4) + (random(`rr${lineIdx}-${ri}`) - 0.5) * 2;
-        const offX = 70 + random(`rx${lineIdx}-${ri}`) * 80;
+    <AbsoluteFill style={{ perspective: 900, transformStyle: "preserve-3d" }}>
+      {[...Array(N)].map((_, i) => {
+        const span = 4200;
+        const speed = 900 + random(`sp${i}`) * 900;
+        const z = ((t * speed + random(`z${i}`) * span) % span) - 3600;
+        const ang = random(`a${i}`) * Math.PI * 2;
+        const rad = 300 + random(`r${i}`) * 900;
+        const x = W / 2 + Math.cos(ang) * rad;
+        const y = H / 2 + Math.sin(ang) * rad * 1.3;
+        const col = i % 3 === 0 ? p.orange : i % 3 === 1 ? p.purple : "#ffffff";
+        const len = 40 + random(`l${i}`) * 140 + boost * 160;
+        const fade = interpolate(z, [-3600, -2600, 300, 600], [0, 1, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
         return (
           <div
-            key={ri}
+            key={i}
             style={{
               position: "absolute",
-              top: top + ri * lh,
-              left: offX,
-              display: "flex",
-              gap: size * 0.3,
-              transform: `rotate(${rot}deg)`,
-              transformOrigin: "center center",
+              left: x,
+              top: y,
+              width: 5,
+              height: len,
+              borderRadius: 3,
+              background: col,
+              boxShadow: `0 0 14px ${col}`,
+              opacity: fade * 0.85,
+              transform: `translateZ(${z}px) rotateZ(${(ang * 180) / Math.PI + 90}deg)`,
             }}
-          >
-            {row.map((w, i) => {
-              if (w.t > t) return <span key={i} style={{ fontFamily: MARKER, fontSize: size, visibility: "hidden" }}>{w.c}</span>;
-              const age = t - w.t;
-              const isImp = w.c === "IMPULSIVE";
-              const isSorry = w.c === "SORRY";
-              const pop = interpolate(age, [0, 0.08, 0.2], [0.3, 1.3, 1], { extrapolateRight: "clamp" });
-              return (
-                <span
-                  key={i}
-                  style={{
-                    fontFamily: isImp ? GLITCH : isSorry ? WET : MARKER,
-                    fontSize: isImp || isSorry ? size * 1.05 : size,
-                    lineHeight: 1,
-                    color: isImp ? "white" : isSorry ? p.red : p.yellow,
-                    textShadow: isImp ? `6px 6px 0 ${p.red}, -4px -4px 0 #00e5ff` : isSorry ? `5px 5px 0 ${p.yellow}` : undefined,
-                    display: "inline-block",
-                    transform: `scale(${pop})`,
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {w.c}
-                </span>
-              );
-            })}
-          </div>
+          />
         );
       })}
     </AbsoluteFill>
   );
 };
 
-/** Outro "I'm on something": melayang, blur, fade. */
-const OutroLine: React.FC<{ line: Line; t: number; p: Props }> = ({ line, t, p }) => {
-  const k = interpolate(t, [line.t, DURATION], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const shown = line.words.filter((w) => w.t <= t).map((w) => clean(w.w));
+// ---------------------------------------------------------------------------
+// Satu "shot" per baris lirik
+// ---------------------------------------------------------------------------
+type Row = { words: (Word & { c: string; acc: boolean })[]; size: number };
+
+const buildRows = (line: Line): Row[] => {
+  const ws = line.words.map((w) => ({ ...w, c: clean(w.w), acc: isAccent(w.w) }));
+  const rows: Row[] = [];
+  let cur: Row["words"] = [];
+  const flush = () => {
+    if (!cur.length) return;
+    const chars = cur.reduce((a, w) => a + w.c.length, 0) + (cur.length - 1);
+    const size = Math.min(cur.length === 1 && cur[0].c.length <= 2 ? 150 : 330, (W - 260) / (Math.max(3, chars) * 0.52));
+    rows.push({ words: cur, size });
+    cur = [];
+  };
+  for (const w of ws) {
+    if (w.acc) {
+      flush();
+      cur = [w];
+      flush();
+      continue;
+    }
+    const chars = cur.reduce((a, x) => a + x.c.length, 0);
+    if (cur.length >= 3 || chars + w.c.length > 9) flush();
+    cur.push(w);
+  }
+  flush();
+  return rows;
+};
+
+const LineShot: React.FC<{ line: Line; idx: number; t: number; p: Props; pulse: number }> = ({
+  line,
+  idx,
+  t,
+  p,
+  pulse,
+}) => {
+  const rows = React.useMemo(() => buildRows(line), [line]);
+  const local = t - line.t;
+  const len = Math.max(0.4, line.end - line.t);
+  const k = Math.min(1, local / len);
+  const color = idx % 2 === 0 ? p.purple : p.orange;
+  const alt = idx % 2 === 0 ? p.orange : p.purple;
+
+  // Kamera: putar & dolly sepanjang baris.
+  const ry0 = (random(`ry${idx}`) - 0.5) * 30;
+  const rx0 = (random(`rx${idx}`) - 0.5) * 24;
+  const rz = (random(`rz${idx}`) - 0.5) * 14;
+  const ease = Easing.out(Easing.cubic)(k);
+  const ry = ry0 * (1 - ease * 0.7);
+  const rx = rx0 * (1 - ease * 0.7);
+  const dolly = interpolate(ease, [0, 1], [-250, 120]);
+  // Whip masuk di awal shot.
+  const whip = interpolate(local, [0, 0.12], [1, 0], { extrapolateRight: "clamp" });
+  const outro = idx === LINES.length - 1 ? interpolate(t, [line.t, DURATION], [0, 1], { extrapolateRight: "clamp" }) : 0;
+
+  const totalH = rows.reduce((a, r) => a + r.size * 0.92, 0);
+  const align = ["flex-start", "center", "flex-end"][Math.floor(random(`al${idx}`) * 3)] as React.CSSProperties["alignItems"];
+
+  // Kata yang paling baru muncul — dipakai untuk anotasi kecil.
+  const latest = [...line.words].reverse().find((w) => w.t <= t);
+
   return (
-    <AbsoluteFill style={{ justifyContent: "center", alignItems: "center", opacity: 1 - k * 0.9 }}>
-      {[...Array(5)].map((_, i) => (
-        <div
-          key={i}
-          style={{
-            position: "absolute",
-            fontFamily: MARKER,
-            fontSize: 150,
-            color: i === 0 ? p.yellow : "transparent",
-            WebkitTextStroke: i === 0 ? undefined : `2px rgba(255,229,0,${0.5 - i * 0.09})`,
-            transform: `scale(${1 + k * 0.6 + i * k * 0.25}) rotate(${-6 + i * k * 4}deg)`,
-            filter: `blur(${k * 6 + i * k * 2}px)`,
-            whiteSpace: "nowrap",
-          }}
-        >
-          {shown.join(" ")}
+    <AbsoluteFill
+      style={{
+        perspective: 1300,
+        filter: `blur(${whip * 10 + outro * 8}px)`,
+        opacity: 1 - outro,
+      }}
+    >
+      <AbsoluteFill
+        style={{
+          justifyContent: "center",
+          alignItems: "center",
+          transformStyle: "preserve-3d",
+          transform: `translateZ(${dolly - outro * 900 + pulse * 60}px) rotateX(${rx}deg) rotateY(${ry}deg) rotateZ(${rz}deg) scale(${1 + whip * 0.3})`,
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", alignItems: align, transformStyle: "preserve-3d", width: W - 240, height: totalH, justifyContent: "center" }}>
+          {rows.map((row, ri) => (
+            <div key={ri} style={{ display: "flex", gap: row.size * 0.2, transformStyle: "preserve-3d", marginTop: ri ? -row.size * 0.06 : 0 }}>
+              {row.words.map((w, wi) => {
+                const age = t - w.t;
+                if (age < 0) return <span key={wi} style={{ ...textBase(row.size), visibility: "hidden" }}>{w.c}</span>;
+                const isLatest = latest !== undefined && latest.t === w.t;
+                const pop = interpolate(age, [0, 0.07, 0.16], [0, 1.12, 1], { extrapolateRight: "clamp" });
+                const z = interpolate(age, [0, 0.12], [-700, 0], { extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) });
+                const blur = interpolate(age, [0, 0.1], [12, 0], { extrapolateRight: "clamp" });
+                const inner = w.acc ? (
+                  <Extruded text={w.c} size={row.size} color={color} />
+                ) : (
+                  <span
+                    style={{
+                      ...textBase(row.size),
+                      color: "white",
+                      opacity: isLatest ? 1 : 0.62,
+                      textShadow: isLatest ? "0 0 14px rgba(255,255,255,0.9), 0 0 50px rgba(255,255,255,0.45)" : "0 0 10px rgba(255,255,255,0.3)",
+                    }}
+                  >
+                    {w.c}
+                  </span>
+                );
+                return (
+                  <div
+                    key={wi}
+                    style={{
+                      position: "relative",
+                      transformStyle: "preserve-3d",
+                      transform: `translateZ(${z}px) scale(${pop})`,
+                      filter: blur > 0.5 ? `blur(${blur}px)` : undefined,
+                    }}
+                  >
+                    {/* Gema/trail saat kata kunci baru muncul */}
+                    {w.acc && age < 0.35
+                      ? [1, 2, 3].map((e) => (
+                          <span
+                            key={e}
+                            style={{
+                              ...textBase(row.size),
+                              position: "absolute",
+                              left: 0,
+                              top: 0,
+                              color: "transparent",
+                              WebkitTextStroke: `2px ${color}`,
+                              opacity: (1 - age / 0.35) * (0.6 - e * 0.15),
+                              transform: `translateZ(${-e * 90}px) scale(${1 + e * 0.08})`,
+                            }}
+                          >
+                            {w.c}
+                          </span>
+                        ))
+                      : null}
+                    {inner}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
         </div>
-      ))}
+
+        {/* Anotasi kecil (seperti "mirror"/"man" di referensi) */}
+        {latest ? (
+          <div
+            style={{
+              ...textBase(64),
+              position: "absolute",
+              left: 120 + random(`an${idx}`) * 600,
+              top: random(`at${idx}`) > 0.5 ? 380 : 1420,
+              color: alt,
+              textShadow: `0 0 16px ${alt}`,
+              transform: `translateZ(220px) rotateY(${-ry * 0.5}deg)`,
+              opacity: 0.9,
+            }}
+          >
+            {clean(latest.w)}
+          </div>
+        ) : null}
+      </AbsoluteFill>
     </AbsoluteFill>
   );
 };
@@ -352,105 +342,44 @@ const OutroLine: React.FC<{ line: Line; t: number; p: Props }> = ({ line, t, p }
 // Main
 // ---------------------------------------------------------------------------
 export const Impulsive: React.FC<Props> = (p) => {
-  const t = useTime();
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const t = frame / fps;
+  const tl = t + p.lyricLead; // waktu lirik (sedikit lebih awal)
   const b = beatInfo(t);
-  const inChorus = t >= CHORUS_START && t < OUTRO_START;
-  const inPre = t >= PRE_START && t < CHORUS_START;
+  const chorusAt = CHORUS_START - p.lyricLead;
+  const inChorus = t >= chorusAt && t < OUTRO_START;
 
-  const lineIdx = LINES.reduce((acc, l, i) => (l.t <= t ? i : acc), -1);
+  const lineIdx = LINES.reduce((acc, l, i) => (l.t <= tl ? i : acc), -1);
   const line = lineIdx >= 0 ? LINES[lineIdx] : null;
 
-  // Build-up: getaran & zoom naik menjelang chorus.
-  const pre = inPre ? interpolate(t, [PRE_START, CHORUS_START], [0, 1]) : 0;
-  const shake = (b.pulse * 14 + pre * 22) * (inChorus ? 1.6 : 1);
-  const sx = (random(`sx${Math.floor(t * 30)}`) - 0.5) * shake;
-  const sy = (random(`sy${Math.floor(t * 30)}`) - 0.5) * shake;
-  const cam = 1 + b.pulse * 0.06 + pre * 0.15;
+  // Guncangan kecil di setiap ketukan.
+  const sh = b.pulse * (inChorus ? 16 : 9);
+  const sx = (random(`sx${frame}`) - 0.5) * sh;
+  const sy = (random(`sy${frame}`) - 0.5) * sh;
 
-  // Background: hitam; chorus dapat kilatan merah di kick kuat.
-  const redFlash = inChorus && b.strong ? b.pulse : 0;
-  const whiteFlash = (b.strong ? b.pulse * 0.35 : 0) + (Math.abs(t - CHORUS_START) < 0.15 ? 0.9 : 0);
+  // Kilatan bingkai ungu (seperti frame ungu di referensi).
+  const frameFlash = (inChorus && b.strong && b.index % 4 === 0 ? 1 : 0) * Math.exp(-b.since * 10);
+  const chorusHit = t >= chorusAt ? Math.exp(-(t - chorusAt) * 6) : 0;
 
-  // Cipratan cat menumpuk tiap kick kuat di chorus.
-  const splats = BEATS.map((bt, i) => ({ bt, i }))
-    .filter(({ bt, i }) => bt >= CHORUS_START - 0.05 && bt <= t && STRENGTH[i] > 0.7)
-    .slice(-4);
-
-  const outroFade = interpolate(t, [DURATION - 0.8, DURATION], [1, 0], { extrapolateLeft: "clamp" });
-
-  let scene: React.ReactNode = null;
-  if (line) {
-    if (t >= OUTRO_START) scene = <OutroLine line={line} t={t} p={p} />;
-    else if (inChorus) scene = <PosterLine line={line} t={t} p={p} lineIdx={lineIdx} />;
-    else if (inPre) scene = <SlamWord line={line} t={t} p={p} intensity={1 + pre * 2} />;
-    else if (lineIdx % 3 === 2) scene = <SlamWord line={line} t={t} p={p} intensity={1} />;
-    else scene = <StackLine line={line} t={t} p={p} variant={lineIdx} />;
-  }
+  const fadeOut = interpolate(t, [DURATION - 0.6, DURATION], [1, 0], { extrapolateLeft: "clamp" });
 
   return (
-    <AbsoluteFill style={{ backgroundColor: p.ink, overflow: "hidden", opacity: outroFade }}>
+    <AbsoluteFill style={{ backgroundColor: "#050507", overflow: "hidden", opacity: fadeOut }}>
       <Audio src={staticFile(p.audioFile)} />
-      <WarpDefs seed={Math.max(0, b.index)} scale={inChorus ? 10 + b.pulse * 28 : 0} />
 
-      <AbsoluteFill style={{ backgroundColor: p.red, opacity: redFlash * 0.85 }} />
+      <AbsoluteFill style={{ background: `radial-gradient(ellipse at 50% 55%, ${shade(p.purple, 0.22)} 0%, transparent 60%)`, opacity: 0.5 + b.pulse * 0.5 }} />
+      <Streaks t={t} boost={b.pulse + (inChorus ? 0.4 : 0)} p={p} />
 
-      {/* Garis-garis kecepatan di belakang (verse) */}
-      {!inChorus ? (
-        <AbsoluteFill style={{ opacity: 0.18 }}>
-          {[...Array(14)].map((_, i) => (
-            <div
-              key={i}
-              style={{
-                position: "absolute",
-                top: (i / 14) * 1920,
-                left: ((t * 900 * (1 + (i % 3))) % 2400) - 1200,
-                width: 600 + (i % 4) * 200,
-                height: 4,
-                background: i % 5 === 0 ? p.yellow : "white",
-              }}
-            />
-          ))}
-        </AbsoluteFill>
-      ) : null}
-
-      <AbsoluteFill style={{ transform: `translate(${sx}px, ${sy}px) scale(${cam})` }}>
-        {splats.map(({ bt, i }, k) => {
-          const grow = interpolate(t - bt, [0, 0.12], [0.3, 1], { extrapolateRight: "clamp" });
-          const size = 380 + random(`ss${i}`) * 320;
-          const side = i % 2 ? W - size * 0.55 : -size * 0.45;
-          return (
-            <div
-              key={i}
-              style={{
-                position: "absolute",
-                left: side,
-                top: 150 + random(`st${i}`) * 1400,
-                opacity: (k === splats.length - 1 ? 0.95 : 0.7) * (t >= OUTRO_START ? 0.35 : 1),
-                transform: `rotate(${random(`sr${i}`) * 360}deg)`,
-              }}
-            >
-              <Splat seed={i} color={p.red} size={size} grow={grow} />
-            </div>
-          );
-        })}
-        {scene}
+      <AbsoluteFill style={{ transform: `translate(${sx}px, ${sy}px)` }}>
+        {line ? <LineShot key={lineIdx} line={line} idx={lineIdx} t={tl} p={p} pulse={b.pulse} /> : null}
       </AbsoluteFill>
 
-      {/* HUD kecil ala edit TikTok */}
-      <div style={{ position: "absolute", top: 130, left: 70, right: 70, display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 30, color: "white", opacity: 0.85, letterSpacing: 4 }}>
-        <span>({"IMPULSIVE"})</span>
-        <span style={{ color: p.yellow }}>THEKIDSZN</span>
-      </div>
-      <div style={{ position: "absolute", bottom: 130, left: 70, right: 70, display: "flex", justifyContent: "space-between", fontFamily: MONO, fontSize: 26, color: "white", opacity: 0.7 }}>
-        <span>{line ? line.text.toUpperCase() : ""}</span>
-      </div>
-      <div style={{ position: "absolute", bottom: 90, left: 70, right: 70, height: 4, background: "rgba(255,255,255,0.2)" }}>
-        <div style={{ width: `${(t / DURATION) * 100}%`, height: "100%", background: p.yellow }} />
-      </div>
+      {/* Bingkai ungu + layar ungu saat masuk chorus */}
+      <AbsoluteFill style={{ boxShadow: `inset 0 0 0 ${70 * frameFlash}px ${p.purple}`, opacity: frameFlash }} />
+      <AbsoluteFill style={{ backgroundColor: p.purple, opacity: chorusHit * 0.85, mixBlendMode: "screen" }} />
 
-      <Grain />
-      <AbsoluteFill style={{ backgroundColor: "white", opacity: Math.min(0.9, whiteFlash) }} />
-      <AbsoluteFill style={{ background: "radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.8) 100%)" }} />
+      <AbsoluteFill style={{ background: "radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.85) 100%)" }} />
     </AbsoluteFill>
   );
 };
